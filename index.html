@@ -1,0 +1,183 @@
+<div id="app">
+  <canvas id="c" width="800" height="520"></canvas>
+  <div id="controls">
+    <label>Longitud L (m): <input type="range" id="L" min="0.3" max="2" step="0.05" value="1"><span id="Lv">1.00</span></label>
+    <label>Ángulo inicial θ₀ (°): <input type="range" id="th0" min="5" max="90" step="1" value="30"><span id="th0v">30</span></label>
+    <label>Gravedad g (m/s²): <input type="range" id="g" min="1" max="25" step="0.1" value="9.8"><span id="gv">9.8</span></label>
+    <label>Amortiguamiento β (1/s): <input type="range" id="beta" min="0" max="1" step="0.01" value="0.02"><span id="bv">0.02</span></label>
+    <label>Escala (px por metro): <input type="range" id="scale" min="80" max="200" step="5" value="180"><span id="sv">180</span></label>
+    <div>
+      <button id="go">Lanzar</button>
+      <button id="reset">Reiniciar</button>
+    </div>
+  </div>
+</div>
+
+<style>
+  body { font-family: Arial, sans-serif; background: #eef1f4; margin: 0; }
+  #app { width: 800px; margin: 10px auto; }
+  canvas { display: block; border: 1px solid #999; background: #fff; }
+  #controls { margin-top: 8px; font-size: 13px; }
+  #controls label { display: flex; align-items: center; margin: 3px 0; }
+  #controls label input { width: 220px; margin: 0 10px; }
+  #controls span { width: 50px; font-weight: bold; }
+  button { padding: 5px 14px; margin-right: 6px; cursor: pointer; }
+</style>
+
+<script>
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const $ = id => document.getElementById(id);
+const W = cv.width, H = cv.height;
+const PX = 400, PY = 95; // punto de suspensión
+
+let theta, omega, t, running = false, last = 0;
+let lastCross = { pos: null, neg: null };
+let period = null;
+
+function params() {
+  return { L: +$('L').value, th0: +$('th0').value, g: +$('g').value,
+           beta: +$('beta').value, scale: +$('scale').value };
+}
+
+function updateLabels() {
+  $('Lv').textContent = (+$('L').value).toFixed(2);
+  $('th0v').textContent = $('th0').value;
+  $('gv').textContent = (+$('g').value).toFixed(1);
+  $('bv').textContent = (+$('beta').value).toFixed(2);
+  $('sv').textContent = $('scale').value;
+}
+
+function resetState() {
+  const p = params();
+  theta = p.th0 * Math.PI / 180;
+  omega = 0; t = 0;
+  lastCross = { pos: null, neg: null };
+  period = null;
+}
+
+// θ'' = -(g/L) sen θ - β θ'
+function acc(th, om, p) { return -(p.g / p.L) * Math.sin(th) - p.beta * om; }
+
+function step(dt) {
+  const p = params();
+  const k1t = omega,                 k1w = acc(theta, omega, p);
+  const k2t = omega + dt/2*k1w,      k2w = acc(theta + dt/2*k1t, omega + dt/2*k1w, p);
+  const k3t = omega + dt/2*k2w,      k3w = acc(theta + dt/2*k2t, omega + dt/2*k2w, p);
+  const k4t = omega + dt*k3w,        k4w = acc(theta + dt*k3t, omega + dt*k3w, p);
+  const prev = theta;
+  theta += dt/6 * (k1t + 2*k2t + 2*k3t + k4t);
+  omega += dt/6 * (k1w + 2*k2w + 2*k3w + k4w);
+  t += dt;
+
+  // cruce por θ = 0 en la misma dirección, dos veces consecutivas
+  if (prev * theta < 0 || (prev !== 0 && theta === 0)) {
+    const frac = Math.abs(prev) / (Math.abs(prev) + Math.abs(theta));
+    const tc = t - dt + frac * dt;
+    const dir = omega > 0 ? 'pos' : 'neg';
+    if (lastCross[dir] !== null) period = tc - lastCross[dir];
+    lastCross[dir] = tc;
+  }
+}
+
+function drawLab() {
+  // pared
+  ctx.fillStyle = '#dfe7ea'; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = '#c9d3d7';
+  for (let x = 0; x < W; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 400); ctx.stroke(); }
+  for (let y = 0; y < 400; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+
+  // repisa con frascos
+  ctx.fillStyle = '#b9a98a'; ctx.fillRect(280, 215, 240, 6);
+  const cols = ['#ff8a8a', '#7fe0b0', '#ffe27a', '#c9a0ff', '#7fd6e8'];
+  cols.forEach((c, i) => {
+    const x = 295 + i * 44;
+    ctx.fillStyle = c; ctx.globalAlpha = 0.8;
+    ctx.fillRect(x, 185, 22, 30);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = '#557'; ctx.strokeRect(x, 185, 22, 30);
+    ctx.fillStyle = '#889'; ctx.fillRect(x + 5, 179, 12, 6);
+  });
+
+  // pizarra
+  ctx.fillStyle = '#fff'; ctx.fillRect(60, 250, 150, 70);
+  ctx.strokeStyle = '#999'; ctx.strokeRect(60, 250, 150, 70);
+  ctx.fillStyle = '#222'; ctx.font = 'bold 12px Arial';
+  ctx.fillText('Laboratorio de Física', 72, 275);
+  ctx.font = '10px Arial'; ctx.fillStyle = '#555';
+  ctx.fillText('Experimento: Péndulo simple', 72, 291);
+  ctx.fillText('Medición del período', 72, 305);
+
+  // mesa
+  ctx.fillStyle = '#c8b89a'; ctx.fillRect(0, 400, W, 22);
+  ctx.fillStyle = '#a89878'; ctx.fillRect(60, 422, 18, 98); ctx.fillRect(W - 78, 422, 18, 98);
+  ctx.fillStyle = '#d9cfbd'; ctx.fillRect(0, 422, W, 98);
+  ctx.fillStyle = '#a89878'; ctx.fillRect(60, 422, 18, 98); ctx.fillRect(W - 78, 422, 18, 98);
+}
+
+function drawSupport() {
+  // base en la pared/techo y barra horizontal
+  ctx.fillStyle = '#555'; ctx.fillRect(PX - 90, PY - 28, 180, 10);
+  ctx.fillStyle = '#777'; ctx.fillRect(PX - 6, PY - 38, 12, 40);
+  ctx.fillStyle = '#444'; ctx.fillRect(PX - 30, PY - 18, 60, 8);
+  ctx.beginPath(); ctx.arc(PX, PY, 5, 0, 2 * Math.PI); ctx.fillStyle = '#222'; ctx.fill();
+}
+
+function draw() {
+  const p = params();
+  drawLab();
+  drawSupport();
+  const len = p.L * p.scale;
+  const bx = PX + len * Math.sin(theta), by = PY + len * Math.cos(theta);
+  ctx.strokeStyle = '#222'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(PX, PY); ctx.lineTo(bx, by); ctx.stroke();
+  ctx.lineWidth = 1;
+  const grad = ctx.createRadialGradient(bx - 4, by - 4, 2, bx, by, 14);
+  grad.addColorStop(0, '#ff7777'); grad.addColorStop(1, '#bb0000');
+  ctx.beginPath(); ctx.arc(bx, by, 14, 0, 2 * Math.PI); ctx.fillStyle = grad; ctx.fill();
+  ctx.strokeStyle = '#600'; ctx.stroke();
+
+  // datos en tiempo real (esquina superior)
+  ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.fillRect(10, 10, 190, 62);
+  ctx.strokeStyle = '#999'; ctx.strokeRect(10, 10, 190, 62);
+  ctx.fillStyle = '#111'; ctx.font = '13px monospace';
+  ctx.fillText('t = ' + t.toFixed(2) + ' s', 18, 29);
+  ctx.fillText('θ = ' + (theta * 180 / Math.PI).toFixed(1) + '°', 18, 46);
+  ctx.fillText('T_exp = ' + (period === null ? '--' : period.toFixed(3) + ' s'), 18, 63);
+}
+
+function loop(now) {
+  if (!running) return;
+  let frame = Math.min((now - last) / 1000, 0.05);
+  last = now;
+  const n = Math.ceil(frame / 0.002);
+  for (let i = 0; i < n; i++) step(frame / n);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+$('go').onclick = () => {
+  if (running) return;
+  running = true;
+  last = performance.now();
+  requestAnimationFrame(loop);
+};
+
+$('reset').onclick = () => {
+  running = false;
+  resetState();
+  draw();
+};
+
+['L', 'th0', 'g', 'beta', 'scale'].forEach(id => {
+  $(id).addEventListener('input', () => {
+    updateLabels();
+    if (!running && (id === 'th0')) resetState();
+    draw();
+  });
+});
+
+updateLabels();
+resetState();
+draw();
+</script>
